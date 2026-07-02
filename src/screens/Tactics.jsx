@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion'
-import { ArrowRight, Star } from '@phosphor-icons/react'
+import { ArrowRight, Star, Crosshair } from '@phosphor-icons/react'
 import { TEAMS, overall } from '../data/teams'
-import { FORMATIONS, MENTALITIES, PRESSING, STYLES } from '../engine'
+import { FORMATIONS, MENTALITIES, PRESSING, STYLES, FOCUS, expectation } from '../engine'
 import { Flag, Eyebrow, Btn, Segmented, PosBadge } from '../ui'
 
 const COORDS = {
@@ -69,6 +69,8 @@ function ControlRow({ title, desc, children }) {
 export default function Tactics({ teamId, tactics, setTactics, onConfirm }) {
   const team = TEAMS[teamId]
   const set = (k) => (v) => setTactics({ ...tactics, [k]: v })
+  const exp = expectation(team)
+  const taker = tactics.taker || team.star
 
   return (
     <div className="min-h-[100dvh] max-w-[1400px] mx-auto px-4 md:px-10 pt-10 md:pt-14 pb-24">
@@ -118,6 +120,14 @@ export default function Tactics({ teamId, tactics, setTactics, onConfirm }) {
               onChange={set('style')}
             />
           </ControlRow>
+          <ControlRow title="Attack focus" desc={FOCUS[tactics.focus].desc}>
+            <Segmented
+              cols="grid-cols-2"
+              options={Object.entries(FOCUS).map(([v, m]) => ({ value: v, label: m.label }))}
+              value={tactics.focus}
+              onChange={set('focus')}
+            />
+          </ControlRow>
 
           <Btn onClick={onConfirm} className="mt-8 w-full sm:w-auto">
             Confirm and enter the tournament
@@ -125,20 +135,40 @@ export default function Tactics({ teamId, tactics, setTactics, onConfirm }) {
           </Btn>
         </div>
 
-        <div className="order-3 border border-line rounded-xl p-5 bg-panel">
-          <p className="font-mono text-[11px] tracking-[0.2em] uppercase text-zinc-500 mb-4">Key players</p>
-          <div className="divide-y divide-line">
-            {team.players.map((pl) => (
-              <div key={pl.n} className="flex items-center gap-3 py-2.5">
-                <PosBadge p={pl.p} />
-                <span className="text-sm font-bold text-zinc-200 truncate">{pl.n}</span>
-                {pl.n === team.star && <Star size={13} weight="fill" className="text-gold ml-auto shrink-0" />}
-              </div>
-            ))}
+        <div className="order-3 space-y-5">
+          <div className="border border-line rounded-xl p-5 bg-panel">
+            <p className="font-mono text-[11px] tracking-[0.2em] uppercase text-zinc-500 mb-1.5">Set-piece taker</p>
+            <p className="text-[11px] text-zinc-600 leading-snug mb-3">
+              Takes penalties and steps up first in a shootout.
+            </p>
+            <div className="divide-y divide-line">
+              {team.players.map((pl) => (
+                <button
+                  key={pl.n}
+                  onClick={() => set('taker')(pl.n)}
+                  className={`w-full flex items-center gap-3 py-2.5 text-left transition-colors cursor-pointer ${taker === pl.n ? '' : 'hover:bg-white/[0.03]'}`}
+                >
+                  <PosBadge p={pl.p} />
+                  <span className={`text-sm font-bold truncate ${taker === pl.n ? 'text-gold' : 'text-zinc-200'}`}>{pl.n}</span>
+                  <span className="ml-auto flex items-center gap-1.5 shrink-0">
+                    {taker === pl.n && <Crosshair size={13} weight="bold" className="text-gold" />}
+                    {pl.n === team.star && <Star size={13} weight="fill" className="text-gold" />}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <div className="mt-4 pt-4 border-t border-line flex justify-between font-mono text-xs text-zinc-500">
+              <span>SQUAD RATING</span>
+              <span className="text-gold tabular">{overall(team)}</span>
+            </div>
           </div>
-          <div className="mt-4 pt-4 border-t border-line flex justify-between font-mono text-xs text-zinc-500">
-            <span>SQUAD RATING</span>
-            <span className="text-gold tabular">{overall(team)}</span>
+          <div className="border border-line rounded-xl p-5">
+            <p className="font-mono text-[11px] tracking-[0.2em] uppercase text-zinc-500 mb-2">Board expectation</p>
+            <p className="text-lg font-black tracking-tight text-zinc-100">{exp.label}</p>
+            <p className="mt-1.5 text-xs text-zinc-500 leading-relaxed">
+              {team.name} rank #{exp.pos} of 48 squads at this tournament. Fall short and the
+              flight home gets uncomfortable. Go further and you write your own contract.
+            </p>
           </div>
         </div>
       </div>

@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowRight, Trophy, MapPin } from '@phosphor-icons/react'
+import { ArrowRight, Trophy, MapPin, Television } from '@phosphor-icons/react'
 import { TEAMS, GROUPS, overall } from '../data/teams'
+import { expectation } from '../engine'
 import { Flag, Eyebrow, Btn, RatingBar } from '../ui'
 
 const CITIES = [
@@ -62,9 +63,10 @@ function GroupBlock({ letter, selected, onSelect, index }) {
   )
 }
 
-export default function NationSelect({ onConfirm }) {
+export default function NationSelect({ onConfirm, onSpectate }) {
   const [selected, setSelected] = useState(null)
   const team = selected ? TEAMS[selected] : null
+  const exp = team ? expectation(team) : null
 
   return (
     <div className="min-h-[100dvh]">
@@ -98,8 +100,15 @@ export default function NationSelect({ onConfirm }) {
                   <Trophy size={28} className="text-zinc-600" weight="duotone" />
                   <p className="text-sm text-zinc-500 leading-relaxed max-w-[36ch]">
                     Select a nation from the draw to see their squad profile, world
-                    ranking and route through the tournament.
+                    ranking and what the board will expect from you.
                   </p>
+                  <button
+                    onClick={onSpectate}
+                    className="mt-2 flex items-center gap-2 font-mono text-[11px] tracking-[0.18em] uppercase text-zinc-500 hover:text-gold transition-colors cursor-pointer"
+                  >
+                    <Television size={14} />
+                    Or just watch — simulate the whole tournament
+                  </button>
                 </div>
               ) : (
                 <motion.div
@@ -129,16 +138,31 @@ export default function NationSelect({ onConfirm }) {
                     <RatingBar label="DEF" value={team.def} />
                   </div>
 
-                  <div className="mt-5 pt-4 border-t border-line flex items-center gap-2 text-sm">
-                    <MapPin size={14} className="text-gold" />
-                    <span className="text-zinc-500">Talisman</span>
-                    <span className="font-bold text-zinc-200">{team.star}</span>
+                  <div className="mt-5 pt-4 border-t border-line space-y-2 text-sm">
+                    <div className="flex items-center gap-2">
+                      <MapPin size={14} className="text-gold" />
+                      <span className="text-zinc-500">Talisman</span>
+                      <span className="font-bold text-zinc-200">{team.star}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Trophy size={14} className="text-gold" />
+                      <span className="text-zinc-500">Board expects</span>
+                      <span className="font-bold text-zinc-200">{exp.label}</span>
+                      <span className="ml-auto font-mono text-[10px] text-zinc-600">#{exp.pos} of 48</span>
+                    </div>
                   </div>
 
                   <Btn onClick={() => onConfirm(team.id)} className="mt-6 w-full">
                     Take charge of {team.name}
                     <ArrowRight size={16} weight="bold" />
                   </Btn>
+                  <button
+                    onClick={onSpectate}
+                    className="mt-3 w-full flex items-center justify-center gap-2 font-mono text-[11px] tracking-[0.18em] uppercase text-zinc-500 hover:text-gold transition-colors cursor-pointer"
+                  >
+                    <Television size={14} />
+                    Or just watch — simulate the tournament
+                  </button>
                 </motion.div>
               )}
             </div>

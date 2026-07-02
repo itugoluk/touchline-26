@@ -1,4 +1,4 @@
-import { TEAMS, GROUPS, VENUES } from './data/teams.js'
+import { TEAMS, GROUPS, VENUES, overall } from './data/teams.js'
 
 export const FORMATIONS = {
   '4-3-3': { att: 1.06, def: 0.98, edgeOver: '4-4-2', desc: 'Width and front-foot pressure. Stretches flat midfields.' },
@@ -26,7 +26,15 @@ export const STYLES = {
   direct: { label: 'Direct', desc: 'Fast, vertical, chaotic. Raises the tempo for both sides.' },
 }
 
-export const DEFAULT_TACTICS = { formation: '4-3-3', mentality: 'balanced', pressing: 'mid', style: 'possession' }
+export const FOCUS = {
+  talisman: { label: 'Through the talisman', desc: 'Everything runs through your star. He scores more and lifts the team against weaker sides, but stronger opponents will mark him out of it.' },
+  collective: { label: 'Share the load', desc: 'No single reference point. Goals spread across the team, no swing either way.' },
+}
+
+export const DEFAULT_TACTICS = {
+  formation: '4-3-3', mentality: 'balanced', pressing: 'mid', style: 'possession',
+  focus: 'collective', taker: null,
+}
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v))
 const rnd = () => Math.random()
@@ -36,10 +44,11 @@ export function aiTactics(team, opp) {
   const mine = (team.att + team.mid + team.def) / 3
   const theirs = (opp.att + opp.mid + opp.def) / 3
   const gap = mine - theirs
-  if (gap > 6) return { formation: '4-3-3', mentality: 'attacking', pressing: 'high', style: 'possession' }
-  if (gap < -8) return { formation: '5-4-1', mentality: 'defensive', pressing: 'low', style: 'counter' }
-  if (gap < -3) return { formation: '4-2-3-1', mentality: 'balanced', pressing: 'low', style: 'counter' }
-  return { formation: pick(['4-3-3', '4-2-3-1', '3-5-2']), mentality: 'balanced', pressing: 'mid', style: pick(['possession', 'direct']) }
+  const focus = team.att >= team.mid + 3 ? 'talisman' : 'collective'
+  if (gap > 6) return { formation: '4-3-3', mentality: 'attacking', pressing: 'high', style: 'possession', focus, taker: null }
+  if (gap < -8) return { formation: '5-4-1', mentality: 'defensive', pressing: 'low', style: 'counter', focus, taker: null }
+  if (gap < -3) return { formation: '4-2-3-1', mentality: 'balanced', pressing: 'low', style: 'counter', focus, taker: null }
+  return { formation: pick(['4-3-3', '4-2-3-1', '3-5-2']), mentality: 'balanced', pressing: 'mid', style: pick(['possession', 'direct']), focus, taker: null }
 }
 
 // Expected goals per 90 for one side, given both teams and both tactic sets.
@@ -69,7 +78,65 @@ export function computeXg(team, opp, tac, oppTac) {
   if (oppTac.style === 'possession' && opp.mid >= team.mid) xg *= 0.88
   if (oppTac.style === 'direct') xg *= 1.04
 
+  if (tac.focus === 'talisman') xg *= overall(team) >= overall(opp) ? 1.06 : 0.96
+
   return clamp(xg, 0.15, 4.2)
+}
+
+const fact = (n) => { let r = 1; for (let i = 2; i <= n; i++) r *= i; return r }
+const poisson = (l, k) => Math.exp(-l) * Math.pow(l, k) / fact(k)
+
+// Win/draw/loss probabilities from the same model the match runs on.
+export function matchOdds(home, away, tacH, tacA) {
+  const xh = computeXg(home, away, tacH, tacA)
+  const xa = computeXg(away, home, tacA, tacH)
+  let h = 0, d = 0, a = 0
+  for (let i = 0; i <= 9; i++) {
+    for (let j = 0; j <= 9; j++) {
+      const p = poisson(xh, i) * poisson(xa, j)
+      if (i > j) h += p
+      else if (i < j) a += p
+      else d += p
+    }
+  }
+  const total = h + d + a
+  return { h: Math.round((h / total) * 100), d: Math.round((d / total) * 100), a: Math.round((a / total) * 100) }
+}
+
+// Board expectation tiers by squad strength across all 48.
+export const STAGE_IDX = { GROUP: 0, R32: 1, R16: 2, QF: 3, SF: 4, F: 5, CHAMPION: 6 }
+const STAGE_NAME = ['Group stage', 'Round of 32', 'Round of 16', 'Quarter-finals', 'Semi-finals', 'The final', 'World champions']
+
+export function expectation(team) {
+  const ranked = Object.values(TEAMS).map((t) => ({ id: t.id, ovr: overall(t) })).sort((x, y) => y.ovr - x.ovr)
+  const pos = ranked.findIndex((t) => t.id === team.id) + 1
+  let idx, label
+  if (pos <= 4) { idx = 4; label = 'Semi-finals' }
+  else if (pos <= 8) { idx = 3; label = 'Quarter-finals' }
+  else if (pos <= 16) { idx = 2; label = 'Round of 16' }
+  else if (pos <= 32) { idx = 1; label = 'Round of 32' }
+  else { idx = 0; label = 'Group stage football' }
+  return { pos, idx, label }
+}
+
+export function achievedIndex(userId, rounds, champion) {
+  if (champion === userId) return 6
+  let reached = 0
+  const order = ['R32', 'R16', 'QF', 'SF', 'F']
+  order.forEach((st, i) => {
+    for (const t of rounds[st] || []) {
+      if (t.home === userId || t.away === userId) reached = Math.max(reached, t.winner === userId ? i + 2 : i + 1)
+    }
+  })
+  return reached
+}
+
+export function verdict(exp, achieved, userId) {
+  const team = TEAMS[userId]
+  if (achieved >= 6) return { tone: 'gold', text: `Nobody can argue with the trophy. ${team.name} expected ${exp.label.toLowerCase()} — you gave them history.` }
+  if (achieved > exp.idx) return { tone: 'good', text: `The board expected ${exp.label.toLowerCase()}. Reaching the ${STAGE_NAME[achieved].toLowerCase()} means you leave with credit — and probably a pay rise.` }
+  if (achieved === exp.idx) return { tone: 'even', text: `Par for the course. ${exp.label} was the target and that is exactly what you delivered. Solid, if not spectacular.` }
+  return { tone: 'bad', text: `The target was ${exp.label.toLowerCase()} and you fell short. Expect awkward questions on the flight home.` }
 }
 
 const GOAL_FLAVOR = [
@@ -91,9 +158,13 @@ const CHANCE_FLAVOR = [
   'heads over from six yards',
 ]
 
-function scorerFor(team) {
-  const weights = team.players.map((pl) => (pl.p === 'FW' ? 3 : pl.p === 'MF' ? 1.6 : 0.55))
-  const total = weights.reduce((a, b) => a + b, 0)
+function scorerFor(team, tac) {
+  const weights = team.players.map((pl) => {
+    let w = pl.p === 'FW' ? 3 : pl.p === 'MF' ? 1.6 : 0.55
+    if (tac && tac.focus === 'talisman' && pl.n === team.star) w *= 2.2
+    return w
+  })
+  const total = weights.reduce((x, y) => x + y, 0)
   let r = rnd() * total
   for (let i = 0; i < team.players.length; i++) {
     r -= weights[i]
@@ -102,8 +173,8 @@ function scorerFor(team) {
   return team.players[0].n
 }
 
-// Simulate minutes (from, to] and return events. Pure w.r.t. inputs.
-export function simulateSegment(home, away, tacH, tacA, from, to) {
+// Simulate minutes (from, to] and return events. mods multiply each side's chance creation.
+export function simulateSegment(home, away, tacH, tacA, from, to, mods = { h: 1, a: 1 }) {
   const events = []
   let xgH = 0
   let xgA = 0
@@ -113,16 +184,16 @@ export function simulateSegment(home, away, tacH, tacA, from, to) {
       const opp = side === 'H' ? away : home
       const tac = side === 'H' ? tacH : tacA
       const oppTac = side === 'H' ? tacA : tacH
-      let xg = computeXg(team, opp, tac, oppTac)
+      let xg = computeXg(team, opp, tac, oppTac) * (side === 'H' ? mods.h : mods.a)
       if (min > 70 && PRESSING[oppTac.pressing].late > 1) xg *= PRESSING[oppTac.pressing].late
       const perMin = xg / 94
-      xgH += side === 'H' ? perMin : 0
-      xgA += side === 'A' ? perMin : 0
+      if (side === 'H') xgH += perMin
+      else xgA += perMin
       const roll = rnd()
       if (roll < perMin) {
-        events.push({ min, side, type: 'goal', player: scorerFor(team), text: pick(GOAL_FLAVOR) })
+        events.push({ min, side, type: 'goal', player: scorerFor(team, tac), text: pick(GOAL_FLAVOR) })
       } else if (roll < perMin * 2.6) {
-        events.push({ min, side, type: 'chance', player: scorerFor(team), text: pick(CHANCE_FLAVOR) })
+        events.push({ min, side, type: 'chance', player: scorerFor(team, tac), text: pick(CHANCE_FLAVOR) })
       } else if (roll > 0.996) {
         events.push({ min, side, type: 'card', player: pick(team.players).n, text: 'goes into the book for a cynical foul' })
       }
@@ -131,30 +202,33 @@ export function simulateSegment(home, away, tacH, tacA, from, to) {
   return { events, xgH, xgA }
 }
 
-export function shootout(home, away) {
+export function shootout(home, away, tacH = null, tacA = null) {
   const kicks = []
-  const takers = (t) => [...t.players].sort((a, b) => (b.p === 'FW' ? 3 : b.p === 'MF' ? 2 : 1) - (a.p === 'FW' ? 3 : a.p === 'MF' ? 2 : 1))
-  const tH = takers(home)
-  const tA = takers(away)
+  const takers = (t, tac) => {
+    const sorted = [...t.players].sort((x, y) => (y.p === 'FW' ? 3 : y.p === 'MF' ? 2 : 1) - (x.p === 'FW' ? 3 : x.p === 'MF' ? 2 : 1))
+    const first = (tac && tac.taker) || t.star
+    return [first, ...sorted.map((p) => p.n).filter((n) => n !== first)]
+  }
+  const tH = takers(home, tacH)
+  const tA = takers(away, tacA)
   const pFor = (t) => clamp(0.74 + (t.att - 76) * 0.004, 0.58, 0.9)
   let h = 0
   let a = 0
   let round = 0
   while (true) {
     round++
-    const kH = { team: 'H', round, taker: tH[(round - 1) % tH.length].n, scored: rnd() < pFor(home) }
+    const kH = { team: 'H', round, taker: tH[(round - 1) % tH.length], scored: rnd() < pFor(home) }
     if (kH.scored) h++
     kicks.push(kH)
-    const kA = { team: 'A', round, taker: tA[(round - 1) % tA.length].n, scored: rnd() < pFor(away) }
+    const kA = { team: 'A', round, taker: tA[(round - 1) % tA.length], scored: rnd() < pFor(away) }
     if (kA.scored) a++
     kicks.push(kA)
     if (round >= 5 && h !== a) break
     if (round < 5) {
-      const remH = 5 - round
-      const remA = 5 - round
-      if (h > a + remA || a > h + remH) break
+      const rem = 5 - round
+      if (h > a + rem || a > h + rem) break
     }
-    if (round > 10) { // safety: sudden death cap, force resolution
+    if (round > 10) {
       if (h === a) { if (rnd() < 0.5) h++; else a++ }
       break
     }
@@ -162,13 +236,15 @@ export function shootout(home, away) {
   return { h, a, kicks }
 }
 
-// Instant full match (for AI vs AI fixtures)
+// Instant full match (for AI vs AI fixtures). Returns scorers for the golden boot race.
 export function simulateMatch(homeId, awayId, knockout = false, tacHOverride = null, tacAOverride = null) {
   const home = TEAMS[homeId]
   const away = TEAMS[awayId]
   const tacH = tacHOverride || aiTactics(home, away)
   const tacA = tacAOverride || aiTactics(away, home)
+  const allEvents = []
   const seg = simulateSegment(home, away, tacH, tacA, 0, 90)
+  allEvents.push(...seg.events)
   let hs = seg.events.filter((e) => e.type === 'goal' && e.side === 'H').length
   let as = seg.events.filter((e) => e.type === 'goal' && e.side === 'A').length
   let pens = null
@@ -176,12 +252,35 @@ export function simulateMatch(homeId, awayId, knockout = false, tacHOverride = n
   if (knockout && hs === as) {
     et = true
     const extra = simulateSegment(home, away, tacH, tacA, 90, 120)
+    allEvents.push(...extra.events)
     hs += extra.events.filter((e) => e.type === 'goal' && e.side === 'H').length
     as += extra.events.filter((e) => e.type === 'goal' && e.side === 'A').length
-    if (hs === as) pens = shootout(home, away)
+    if (hs === as) pens = shootout(home, away, tacH, tacA)
   }
   const winner = !knockout ? null : hs > as ? homeId : as > hs ? awayId : pens.h > pens.a ? homeId : awayId
-  return { hs, as, pens, winner, et }
+  const scorers = allEvents
+    .filter((e) => e.type === 'goal')
+    .map((e) => ({ team: e.side === 'H' ? homeId : awayId, player: e.player }))
+  return { hs, as, pens, winner, et, scorers }
+}
+
+export function addGoals(boot, scorers) {
+  const next = { ...boot }
+  for (const s of scorers) {
+    const key = `${s.team}:${s.player}`
+    next[key] = (next[key] || 0) + 1
+  }
+  return next
+}
+
+export function bootTable(boot, n = 8) {
+  return Object.entries(boot)
+    .map(([key, goals]) => {
+      const [team, player] = [key.slice(0, 3), key.slice(4)]
+      return { team, player, goals }
+    })
+    .sort((x, y) => y.goals - x.goals || x.player.localeCompare(y.player))
+    .slice(0, n)
 }
 
 // ---------- Tournament structure ----------
@@ -205,6 +304,18 @@ export function buildGroupFixtures() {
     })
   }
   return fixtures
+}
+
+// Simulate every unplayed fixture of one matchday. Returns scorers for the boot tally.
+export function simulateGroupRound(fixtures, round) {
+  const scorers = []
+  const out = fixtures.map((f) => {
+    if (f.round !== round || f.played) return f
+    const r = simulateMatch(f.home, f.away, false)
+    scorers.push(...r.scorers)
+    return { ...f, played: true, hs: r.hs, as: r.as }
+  })
+  return { fixtures: out, scorers }
 }
 
 export function groupTable(g, fixtures) {
@@ -271,18 +382,37 @@ export function nextRoundFrom(ties) {
   return next
 }
 
+export function simTie(t) {
+  const r = simulateMatch(t.home, t.away, true)
+  return {
+    tie: { ...t, played: true, hs: r.hs, as: r.as, pens: r.pens ? { h: r.pens.h, a: r.pens.a } : null, winner: r.winner },
+    scorers: r.scorers,
+  }
+}
+
+// Simulate one whole knockout round (unplayed ties only).
+export function simulateRound(ties) {
+  const scorers = []
+  const out = ties.map((t) => {
+    if (t.played) return t
+    const { tie, scorers: s } = simTie(t)
+    scorers.push(...s)
+    return tie
+  })
+  return { ties: out, scorers }
+}
+
 export function simulateKnockoutFrom(rounds, fromStage) {
   const out = { ...rounds }
+  const scorers = []
   for (let idx = ROUND_ORDER.indexOf(fromStage); idx < ROUND_ORDER.length; idx++) {
     const st = ROUND_ORDER[idx]
     if (!out[st]) out[st] = nextRoundFrom(out[ROUND_ORDER[idx - 1]])
-    out[st] = out[st].map((t) => {
-      if (t.played) return t
-      const r = simulateMatch(t.home, t.away, true)
-      return { ...t, played: true, hs: r.hs, as: r.as, pens: r.pens ? { h: r.pens.h, a: r.pens.a } : null, winner: r.winner }
-    })
+    const r = simulateRound(out[st])
+    out[st] = r.ties
+    scorers.push(...r.scorers)
   }
-  return out
+  return { rounds: out, scorers }
 }
 
 export function possessionEstimate(home, away, tacH, tacA) {

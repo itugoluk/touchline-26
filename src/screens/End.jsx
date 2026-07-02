@@ -1,15 +1,26 @@
+import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { Trophy, ArrowCounterClockwise } from '@phosphor-icons/react'
-import { TEAMS } from '../data/teams'
-import { Flag, Eyebrow, Btn } from '../ui'
+import { Trophy, ArrowCounterClockwise, CaretDown, CaretUp } from '@phosphor-icons/react'
+import { TEAMS, GROUPS } from '../data/teams'
+import { expectation, achievedIndex, verdict } from '../engine'
+import { Flag, Eyebrow, Btn, GoldenBoot } from '../ui'
+import Bracket from './Bracket'
+import { TableRows } from './Hub'
 
-export default function End({ userId, champion, run, onRestart }) {
+export default function End({ state, run, onRestart }) {
+  const { userId, champion, rounds, groupFixtures, boot } = state
   const user = TEAMS[userId]
   const champ = TEAMS[champion]
   const won = champion === userId
+  const [showTables, setShowTables] = useState(false)
+
+  const exp = expectation(user)
+  const achieved = achievedIndex(userId, rounds, champion)
+  const board = verdict(exp, achieved, userId)
+  const verdictTone = { gold: 'border-gold/40 text-gold', good: 'border-win/40 text-win', even: 'border-white/20 text-zinc-300', bad: 'border-loss/40 text-loss' }[board.tone]
 
   return (
-    <div className="min-h-[100dvh] max-w-[900px] mx-auto px-4 md:px-8 pt-16 md:pt-24 pb-24">
+    <div className="min-h-[100dvh] max-w-[1100px] mx-auto px-4 md:px-8 pt-16 md:pt-24 pb-24">
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -56,35 +67,70 @@ export default function End({ userId, champion, run, onRestart }) {
           </div>
         )}
 
-        <div className="mt-14">
-          <p className="font-mono text-[11px] tracking-[0.2em] uppercase text-zinc-500 mb-3 text-center">Your campaign</p>
-          <div className="border border-line rounded-xl divide-y divide-line overflow-hidden max-w-[560px] mx-auto">
-            {run.map((m, i) => {
-              const opp = TEAMS[m.opp]
-              const tone = m.result === 'W' ? 'text-win' : m.result === 'D' ? 'text-zinc-400' : 'text-loss'
-              return (
-                <motion.div
-                  key={i}
-                  initial={{ opacity: 0, x: -12 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.15 + i * 0.07, type: 'spring', stiffness: 120, damping: 20 }}
-                  className="flex items-center gap-3 px-4 py-3"
-                >
-                  <span className="font-mono text-[10px] uppercase tracking-wider text-zinc-600 w-24 shrink-0">{m.label}</span>
-                  <Flag team={opp} className="w-6 h-4" />
-                  <span className="text-sm font-bold text-zinc-200 flex-1 truncate">{opp.name}</span>
-                  <span className="font-mono text-sm text-zinc-100 tabular">
-                    {m.mine}–{m.theirs}
-                    {m.pens && <span className="text-[10px] text-zinc-500 ml-1">({m.pens.mine}–{m.pens.theirs} p)</span>}
-                  </span>
-                  <span className={`font-mono text-xs font-bold w-4 text-right ${tone}`}>{m.result}</span>
-                </motion.div>
-              )
-            })}
-          </div>
+        <div className={`mt-10 max-w-[640px] mx-auto border rounded-xl px-6 py-5 ${verdictTone}`}>
+          <p className="font-mono text-[10px] uppercase tracking-[0.2em] mb-2 opacity-80">The board's verdict</p>
+          <p className="text-sm leading-relaxed text-zinc-300">{board.text}</p>
         </div>
 
-        <div className="mt-10 text-center">
+        <div className="mt-14 grid grid-cols-1 lg:grid-cols-[7fr_5fr] gap-10 items-start">
+          <div>
+            <p className="font-mono text-[11px] tracking-[0.2em] uppercase text-zinc-500 mb-3">Your campaign</p>
+            <div className="border border-line rounded-xl divide-y divide-line overflow-hidden">
+              {run.map((m, i) => {
+                const opp = TEAMS[m.opp]
+                const tone = m.result === 'W' ? 'text-win' : m.result === 'D' ? 'text-zinc-400' : 'text-loss'
+                return (
+                  <motion.div
+                    key={i}
+                    initial={{ opacity: 0, x: -12 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.15 + i * 0.07, type: 'spring', stiffness: 120, damping: 20 }}
+                    className="flex items-center gap-3 px-4 py-3"
+                  >
+                    <span className="font-mono text-[10px] uppercase tracking-wider text-zinc-600 w-24 shrink-0">{m.label}</span>
+                    <Flag team={opp} className="w-6 h-4" />
+                    <span className="text-sm font-bold text-zinc-200 flex-1 truncate">{opp.name}</span>
+                    <span className="font-mono text-sm text-zinc-100 tabular">
+                      {m.mine}–{m.theirs}
+                      {m.pens && <span className="text-[10px] text-zinc-500 ml-1">({m.pens.mine}–{m.pens.theirs} p)</span>}
+                    </span>
+                    <span className={`font-mono text-xs font-bold w-4 text-right ${tone}`}>{m.result}</span>
+                  </motion.div>
+                )
+              })}
+            </div>
+          </div>
+          <GoldenBoot boot={boot} n={10} title="Golden Boot — final standings" />
+        </div>
+
+        <div className="mt-14">
+          <p className="font-mono text-[11px] tracking-[0.2em] uppercase text-zinc-500 mb-3">How the tournament unfolded</p>
+          <Bracket rounds={rounds} userId={userId} />
+        </div>
+
+        <button
+          onClick={() => setShowTables((s) => !s)}
+          className="mt-8 flex items-center gap-2 font-mono text-[11px] tracking-[0.2em] uppercase text-zinc-500 hover:text-gold transition-colors cursor-pointer"
+        >
+          {showTables ? <CaretUp size={12} /> : <CaretDown size={12} />}
+          Group stage — final tables
+        </button>
+        {showTables && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mt-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4"
+          >
+            {Object.keys(GROUPS).map((g) => (
+              <div key={g} className="border border-line rounded-lg overflow-hidden">
+                <p className="font-mono text-[10px] tracking-[0.2em] uppercase text-zinc-600 px-3 pt-2.5">Group {g}</p>
+                <TableRows g={g} fixtures={groupFixtures} userId={userId} compact />
+              </div>
+            ))}
+          </motion.div>
+        )}
+
+        <div className="mt-12 text-center">
           <Btn onClick={onRestart} variant={won ? 'ghost' : 'primary'}>
             <ArrowCounterClockwise size={15} weight="bold" />
             Start another campaign

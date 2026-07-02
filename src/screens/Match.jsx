@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { SoccerBall, Target, Cards, FastForward, Play, Timer } from '@phosphor-icons/react'
+import { SoccerBall, Target, Cards, FastForward, Play, Timer, Lightning, ShieldCheck } from '@phosphor-icons/react'
 import { TEAMS, VENUES, FINAL_VENUE } from '../data/teams'
 import {
-  simulateSegment, shootout, aiTactics, possessionEstimate,
+  simulateSegment, shootout, aiTactics, possessionEstimate, matchOdds,
   FORMATIONS, MENTALITIES, PRESSING, STYLES, ROUND_LABEL,
 } from '../engine'
-import { Flag, Eyebrow, Btn, Segmented } from '../ui'
+import { Flag, Eyebrow, Btn, Segmented, OddsBar } from '../ui'
 
 const TICK_MS = 95
 
@@ -22,6 +22,39 @@ function EventIcon({ type }) {
   if (type === 'chance') return <Target size={14} className="text-zinc-400" />
   if (type === 'card') return <Cards size={14} weight="fill" className="text-[#d4c05f]" />
   return <Timer size={14} className="text-zinc-500" />
+}
+
+function BenchMoves({ subs, onUse }) {
+  const moves = [
+    { key: 'fresh', icon: Lightning, label: 'Fresh legs', desc: 'Attacking change. +10% chance creation for the rest of the match.' },
+    { key: 'shore', icon: ShieldCheck, label: 'Shore it up', desc: 'Defensive change. Opponent creates 10% less for the rest of the match.' },
+  ]
+  return (
+    <div>
+      <p className="font-mono text-[10px] tracking-[0.2em] uppercase text-zinc-500 mb-1.5">Bench — one use each</p>
+      <div className="grid grid-cols-2 gap-1.5">
+        {moves.map(({ key, icon: Icon, label, desc }) => (
+          <button
+            key={key}
+            onClick={() => onUse(key)}
+            disabled={subs[key]}
+            title={desc}
+            className={`flex items-center gap-2 px-3 py-2.5 rounded-md text-[13px] font-bold tracking-tight transition-all duration-200 active:scale-[0.98] cursor-pointer ${
+              subs[key]
+                ? 'bg-gold/15 text-gold cursor-default'
+                : 'bg-white/[0.04] text-zinc-400 hover:bg-white/[0.08] hover:text-zinc-200'
+            }`}
+          >
+            <Icon size={14} weight={subs[key] ? 'fill' : 'regular'} />
+            {subs[key] ? `${label} — on` : label}
+          </button>
+        ))}
+      </div>
+      <p className="mt-1.5 text-[11px] text-zinc-600 leading-snug">
+        Fresh legs lift your attack; shoring up blunts theirs. Both last until full-time.
+      </p>
+    </div>
+  )
 }
 
 function TacticsAdjust({ tactics, setTactics }) {
@@ -60,9 +93,13 @@ export default function Match({ fixture, stage, userId, initialTactics, onDone }
   const [momentum, setMomentum] = useState(0)
   const [pen, setPen] = useState(null)
   const [penShown, setPenShown] = useState(0)
+  const [subs, setSubs] = useState({ fresh: false, shore: false })
 
   const scoreRef = useRef({ h: 0, a: 0 })
   const clockRef = useRef(0)
+  const scorersRef = useRef([])
+  const subsRef = useRef({ fresh: false, shore: false })
+  const aiTacRef = useRef(null)
   const xgRef = useRef({ h: 0, a: 0 })
   const shotsRef = useRef({ h: 0, a: 0 })
   const queueRef = useRef([])
@@ -76,6 +113,7 @@ export default function Match({ fixture, stage, userId, initialTactics, onDone }
   const flushEvent = (e) => {
     if (e.type === 'goal') {
       scoreRef.current = { ...scoreRef.current, [e.side === 'H' ? 'h' : 'a']: scoreRef.current[e.side === 'H' ? 'h' : 'a'] + 1 }
+      scorersRef.current.push({ team: e.side === 'H' ? home.id : away.id, player: e.player })
       setScore(scoreRef.current)
       setMomentum((m) => Math.max(-100, Math.min(100, m + (e.side === 'H' ? 34 : -34))))
     }
@@ -88,9 +126,13 @@ export default function Match({ fixture, stage, userId, initialTactics, onDone }
     const userScore = userIsHome ? scoreRef.current.h : scoreRef.current.a
     const oppScore = userIsHome ? scoreRef.current.a : scoreRef.current.h
     const oppTac = aiInMatch(opp, user, oppScore, userScore, from)
+    aiTacRef.current = oppTac
     const tacH = userIsHome ? tacticsRef.current : oppTac
     const tacA = userIsHome ? oppTac : tacticsRef.current
-    const seg = simulateSegment(home, away, tacH, tacA, from, to)
+    const userMult = subsRef.current.fresh ? 1.1 : 1
+    const oppMult = subsRef.current.shore ? 0.9 : 1
+    const mods = userIsHome ? { h: userMult, a: oppMult } : { h: oppMult, a: userMult }
+    const seg = simulateSegment(home, away, tacH, tacA, from, to, mods)
     xgRef.current = { h: xgRef.current.h + seg.xgH, a: xgRef.current.a + seg.xgA }
     queueRef.current = [...seg.events]
     segEndRef.current = to
@@ -135,7 +177,9 @@ export default function Match({ fixture, stage, userId, initialTactics, onDone }
     }
     if (end === 120) {
       if (h !== a) { setPhase('ft'); return }
-      const p = shootout(home, away)
+      const tacH = userIsHome ? tacticsRef.current : aiTacRef.current
+      const tacA = userIsHome ? aiTacRef.current : tacticsRef.current
+      const p = shootout(home, away, tacH, tacA)
       setPen(p)
       setPenShown(0)
       setPhase('shootout')
@@ -164,7 +208,13 @@ export default function Match({ fixture, stage, userId, initialTactics, onDone }
       as: scoreRef.current.a,
       pens: pen ? { h: pen.h, a: pen.a } : null,
       winner: winnerId(),
+      scorers: scorersRef.current,
     })
+  }
+
+  const useSub = (kind) => {
+    subsRef.current = { ...subsRef.current, [kind]: true }
+    setSubs(subsRef.current)
   }
 
   const pos = possessionEstimate(home, away, userIsHome ? tactics : aiTactics(home, away), userIsHome ? aiTactics(away, home) : tactics)
@@ -213,8 +263,8 @@ export default function Match({ fixture, stage, userId, initialTactics, onDone }
             <motion.div
               className="absolute top-0 bottom-0 bg-gold rounded-full"
               animate={{
-                left: momentum >= 0 ? '50%' : `${50 + momentum / 2}%`,
-                right: momentum >= 0 ? `${50 - momentum / 2}%` : '50%',
+                left: momentum >= 0 ? `${50 - momentum / 2}%` : '50%',
+                right: momentum >= 0 ? '50%' : `${50 + momentum / 2}%`,
               }}
               transition={{ type: 'spring', stiffness: 120, damping: 26 }}
             />
@@ -234,6 +284,14 @@ export default function Match({ fixture, stage, userId, initialTactics, onDone }
               Your plan: <span className="font-mono text-zinc-200">{tactics.formation}</span>, {MENTALITIES[tactics.mentality].label.toLowerCase()},
               {' '}{PRESSING[tactics.pressing].label.toLowerCase()}, {STYLES[tactics.style].label.toLowerCase()} football.
             </p>
+            <div className="mt-5 text-left">
+              <p className="font-mono text-[10px] uppercase tracking-widest text-zinc-600 mb-2 text-center">How the bookmakers see it</p>
+              <OddsBar
+                odds={matchOdds(home, away, userIsHome ? tactics : aiTactics(home, away), userIsHome ? aiTactics(away, home) : tactics)}
+                home={home}
+                away={away}
+              />
+            </div>
             <Btn onClick={() => startSegment(0, 45)} className="mt-6">
               <Play size={15} weight="fill" /> Kick off
             </Btn>
@@ -251,6 +309,9 @@ export default function Match({ fixture, stage, userId, initialTactics, onDone }
               {phase === 'ht' ? 'Half-time team talk' : 'Final half-hour — adjust or hold'}
             </p>
             <TacticsAdjust tactics={tactics} setTactics={setTactics} />
+            <div className="mt-4 pt-4 border-t border-line">
+              <BenchMoves subs={subs} onUse={useSub} />
+            </div>
             <Btn onClick={() => startSegment(phase === 'ht' ? 45 : 70, phase === 'ht' ? 70 : 90)} className="mt-6 w-full">
               Send them back out
             </Btn>
@@ -264,6 +325,9 @@ export default function Match({ fixture, stage, userId, initialTactics, onDone }
               Thirty more minutes. Tired legs everywhere — one mistake or one moment wins it.
             </p>
             <TacticsAdjust tactics={tactics} setTactics={setTactics} />
+            <div className="mt-4 pt-4 border-t border-line text-left">
+              <BenchMoves subs={subs} onUse={useSub} />
+            </div>
             <Btn onClick={() => startSegment(90, 120)} className="mt-6 w-full">Play extra time</Btn>
           </motion.div>
         )}

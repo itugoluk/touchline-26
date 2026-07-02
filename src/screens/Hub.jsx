@@ -2,11 +2,11 @@ import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { Play, CaretDown, CaretUp } from '@phosphor-icons/react'
 import { TEAMS, GROUPS, overall } from '../data/teams'
-import { groupTable, ROUND_LABEL, aiTactics } from '../engine'
-import { Flag, Eyebrow, Btn, RatingBar } from '../ui'
+import { groupTable, ROUND_LABEL, aiTactics, matchOdds, expectation } from '../engine'
+import { Flag, Eyebrow, Btn, RatingBar, OddsBar, LatestResults, GoldenBoot } from '../ui'
 import Bracket from './Bracket'
 
-function TableRows({ g, fixtures, userId, compact = false }) {
+export function TableRows({ g, fixtures, userId, compact = false }) {
   const rows = groupTable(g, fixtures)
   return (
     <div className="divide-y divide-line">
@@ -72,8 +72,13 @@ function FixtureRow({ f, userId }) {
   )
 }
 
-function Scouting({ opp, user }) {
+function Scouting({ opp, user, userTactics, nextFixture, userId }) {
   const oppTac = aiTactics(opp, user)
+  const userIsHome = nextFixture.home === userId
+  const home = userIsHome ? user : opp
+  const away = userIsHome ? opp : user
+  const odds = matchOdds(home, away, userIsHome ? userTactics : oppTac, userIsHome ? oppTac : userTactics)
+  const oppExp = expectation(opp)
   return (
     <div>
       <div className="flex items-center gap-3">
@@ -81,7 +86,7 @@ function Scouting({ opp, user }) {
         <div className="min-w-0">
           <p className="text-lg font-black tracking-tight text-zinc-50 truncate">{opp.name}</p>
           <p className="font-mono text-[10px] uppercase tracking-wider text-zinc-500">
-            World No. {opp.rank} · OVR {overall(opp)}
+            World No. {opp.rank} · OVR {overall(opp)} · #{oppExp.pos} of 48
           </p>
         </div>
       </div>
@@ -99,15 +104,20 @@ function Scouting({ opp, user }) {
         <span className="text-zinc-500">Likely approach</span>
         <span className="text-zinc-200 font-bold text-right capitalize">{oppTac.mentality}</span>
       </div>
+      <div className="mt-4 pt-3 border-t border-line">
+        <p className="font-mono text-[10px] uppercase tracking-widest text-zinc-600 mb-2">How the bookmakers see it</p>
+        <OddsBar odds={odds} home={home} away={away} />
+      </div>
     </div>
   )
 }
 
 export default function Hub({ state, onPlay }) {
-  const { userId, stage, matchday, groupFixtures, rounds } = state
+  const { userId, stage, matchday, groupFixtures, rounds, latest, boot, tactics } = state
   const user = TEAMS[userId]
   const [showGroups, setShowGroups] = useState(false)
   const inGroup = stage === 'GROUP'
+  const exp = expectation(user)
 
   let nextFixture = null
   let opp = null
@@ -147,9 +157,14 @@ export default function Hub({ state, onPlay }) {
             <h1 className="text-3xl md:text-5xl font-black tracking-tighter text-zinc-50">{user.name}</h1>
           </div>
         </div>
-        <p className="font-mono text-xs text-zinc-500 tracking-wider">
-          CAMPAIGN <span className="text-win">{record.w}W</span> · <span className="text-zinc-300">{record.d}D</span> · <span className="text-loss">{record.l}L</span>
-        </p>
+        <div className="text-right">
+          <p className="font-mono text-xs text-zinc-500 tracking-wider">
+            CAMPAIGN <span className="text-win">{record.w}W</span> · <span className="text-zinc-300">{record.d}D</span> · <span className="text-loss">{record.l}L</span>
+          </p>
+          <p className="mt-1 font-mono text-[10px] uppercase tracking-widest text-zinc-600">
+            Board expects: <span className="text-zinc-400">{exp.label}</span>
+          </p>
+        </div>
       </div>
 
       <div className="mt-10 grid grid-cols-1 lg:grid-cols-[8fr_4fr] gap-10 items-start">
@@ -178,18 +193,24 @@ export default function Hub({ state, onPlay }) {
             </>
           )}
 
+          {latest && (
+            <div className="mt-8">
+              <LatestResults latest={latest} userId={userId} />
+            </div>
+          )}
+
           <button
             onClick={() => setShowGroups((s) => !s)}
             className="mt-8 flex items-center gap-2 font-mono text-[11px] tracking-[0.2em] uppercase text-zinc-500 hover:text-gold transition-colors cursor-pointer"
           >
             {showGroups ? <CaretUp size={12} /> : <CaretDown size={12} />}
-            {inGroup ? 'Around the tournament — all groups' : 'Group stage — final tables'}
+            {inGroup ? 'All group tables' : 'Group stage — final tables'}
           </button>
           {showGroups && (
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              className="mt-4 grid grid-cols-2 md:grid-cols-3 gap-4"
+              className="mt-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4"
             >
               {Object.keys(GROUPS).map((g) => (
                 <div key={g} className="border border-line rounded-lg overflow-hidden">
@@ -201,7 +222,7 @@ export default function Hub({ state, onPlay }) {
           )}
         </div>
 
-        <div className="lg:sticky lg:top-10">
+        <div className="lg:sticky lg:top-10 space-y-5">
           {nextFixture && opp ? (
             <motion.div
               initial={{ opacity: 0, y: 14 }}
@@ -213,7 +234,7 @@ export default function Hub({ state, onPlay }) {
                 <span className="w-1.5 h-1.5 rounded-full bg-gold live-dot inline-block" />
                 Next match · {inGroup ? `Matchday ${matchday}` : ROUND_LABEL[stage]}
               </p>
-              <Scouting opp={opp} user={user} />
+              <Scouting opp={opp} user={user} userTactics={tactics} nextFixture={nextFixture} userId={userId} />
               <Btn onClick={() => onPlay(nextFixture)} className="mt-6 w-full">
                 <Play size={15} weight="fill" />
                 Go to the touchline
@@ -224,6 +245,7 @@ export default function Hub({ state, onPlay }) {
               No fixture scheduled. Advance the tournament from the main panel.
             </div>
           )}
+          <GoldenBoot boot={boot} />
         </div>
       </div>
     </div>
